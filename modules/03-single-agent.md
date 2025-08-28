@@ -56,21 +56,22 @@ response = await agent.invoke(chat_history)  # Agent knows "that" refers to life
 
 ---
 
-## Building a Simple Policy Recommendation Agent
+## Building a Multi-Step Policy Recommendation Agent
 
-Let's build a focused agent that demonstrates core concepts:
+Let's build an agent that demonstrates a systematic, outcome-focused 5-step process for policy recommendations (the agent decides which tools to use for each step):
 
 ```python
 import asyncio
 import os
+import json
 from dotenv import load_dotenv
 
 from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents.chat_history import ChatHistory
-from semantic_kernel.functions import kernel_function
-from semantic_kernel.connectors.ai.function_call_behavior import FunctionCallBehavior
+from semantic_kernel.functions import (kernel_function, KernelArguments)
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 
 load_dotenv()
@@ -97,131 +98,234 @@ class SimpleInsuranceAgent:
         )
         self.kernel.add_service(service)
         
-        # 2. Add simple plugins (tools) for the agent
-        policy_plugin = PolicyPlugin()
+        # 2. Add plugin (tools) with realistic data for the agent
+        policy_plugin = PolicyAdvisorPlugin()
         self.kernel.add_plugin(policy_plugin, plugin_name="PolicyTools")
         
-        # 3. Create the agent with personality and tool access
+        # 3. Create the agent with a clear, outcome-focused 5-step process
         self.agent = ChatCompletionAgent(
-            service_id="azure_openai",
             kernel=self.kernel,
-            name="InsuranceAgent",
-            instructions="""You are a friendly insurance advisor helping customers find the right coverage.
+            name="InsuranceAdvisor",
+            instructions="""You are a professional insurance advisor. For every policy recommendation, follow this systematic process:
 
-PERSONALITY:
-- Warm and approachable, but professional
-- Ask questions to understand their needs
-- Explain recommendations clearly
-- Use your tools to get accurate policy information
+STEP 1 âžœ UNDERSTAND THE CUSTOMER
+Announce: "Step 1: Understanding your situation..."
+Goal: Gather a complete picture of their profile and needs (age, income, family, goals)
 
-PROCESS:
-1. Learn about the customer (age, family, income, needs)  
-2. Use your PolicyTools to find suitable options
-3. Explain why you're recommending specific policies
-4. Answer any questions they have
+STEP 2 âžœ IDENTIFY OPTIONS
+Announce: "Step 2: Identifying suitable options..."  
+Goal: Find policies that match their profile and constraints
 
-Remember: You have access to policy search and premium calculation tools - use them!""",
-            execution_settings=OpenAIChatPromptExecutionSettings(
-                service_id="azure_openai",
-                max_tokens=800,
+STEP 3 âžœ DETERMINE COVERAGE
+Announce: "Step 3: Calculating appropriate coverage..."
+Goal: Determine how much insurance they need based on standard methods
+
+STEP 4 âžœ ESTIMATE INVESTMENT
+Announce: "Step 4: Estimating your investment..."
+Goal: Estimate premiums for the recommended coverage
+
+STEP 5 âžœ RECOMMEND SOLUTION
+Announce: "Step 5: My recommendation..."
+Goal: Provide clear advice with concise reasoning
+
+Use the appropriate tools at your disposal to complete each step thoroughly. Keep responses concise and user-friendly.
+
+Policies and defaults:
+- Do Step 1 once per conversation. Build an internal CustomerProfile {age, income, dependents, debts, mortgage, goals, health_class, preferred_term} from chat history; keep it updated silently.
+- Ask at most one non-redundant question per turn, only if it materially changes the outcome. Never ask for details already provided.
+- If required information is missing, proceed with best-effort defaults and disclose under "Assumptions":
+  - debts: 0; mortgage: 0; goals: income replacement (+ children's education if dependents > 0); health_class: Standard; preferred_term: 20 years if age < 40, otherwise 20â€“30 years.
+- If the user requests a later step (e.g., premiums), answer that step immediately using the current profile + assumptions; do not return to Step 1.
+- Start with the requested answer, then add brief context. Label any optional clarification "Optional".
+- Keep steps concise and do not re-announce Step 1 after it has been completed.""",
+            arguments=KernelArguments(settings = OpenAIChatPromptExecutionSettings(
+                max_tokens=1000,
                 temperature=0.7,
-                function_call_behavior=FunctionCallBehavior.EnableFunctions(auto_invoke=True)
-            )
+                function_choice_behavior=FunctionChoiceBehavior.Auto()
+            ))
         )
         
-        print("? Simple Insurance Agent ready!")
+        print("Simple Insurance Agent ready with 5-step process!")
     
     async def chat(self, user_message: str) -> str:
         """Have a conversation with the agent"""
         
         # Add user message and get agent response
         self.chat_history.add_user_message(user_message)
-        response = await self.agent.invoke(self.chat_history)
+        response = await self.agent.get_response(self.chat_history)
         
         # Return the agent's response
-        return response[-1].content if response else "I didn't understand that. Could you try again?"
+        return response.content if response else "I didn't understand that. Could you try again?"
 
-# Simple Plugin with Static Data - Focus on Agent Concepts, Not Complex Logic
+class PolicyAdvisorPlugin:
+    """Plugin with realistic insurance data and calculations to support the 5-step process"""
 
-class PolicyPlugin:
-    """Simple plugin with static policy data to keep focus on agent concepts"""
-    
     @kernel_function(
-        name="find_life_policies",
-        description="Find life insurance policies for a customer based on their age"
+        name="search_available_policies",
+        description="Search policies available for a customer's age and category (life, auto, home). Returns structured data."
     )
-    def find_life_policies(self, age: int) -> str:
-        """Find suitable life insurance policies"""
-        
-        # Static policy data - keep it simple
-        policies = [
-            {"name": "BasicTerm20", "type": "20-Year Term", "max_age": 65, "rate": "$0.60 per $1K"},
-            {"name": "WholeCare", "type": "Whole Life", "max_age": 75, "rate": "$2.50 per $1K"},  
-            {"name": "SimpleTerm10", "type": "10-Year Term", "max_age": 60, "rate": "$0.45 per $1K"}
-        ]
-        
-        # Filter by age
-        suitable = [p for p in policies if age <= p["max_age"]]
-        
-        if not suitable:
-            return f"No policies available for age {age}"
-        
-        result = f"Found {len(suitable)} life insurance options for age {age}:\n\n"
-        for i, policy in enumerate(suitable, 1):
-            result += f"{i}. {policy['name']} ({policy['type']})\n"
-            result += f"   Rate: {policy['rate']} of coverage\n\n"
-        
-        return result
-    
-    @kernel_function(
-        name="calculate_premium",
-        description="Calculate monthly premium for life insurance based on age and coverage amount"
-    )
-    def calculate_premium(self, age: int, coverage_amount: int, policy_type: str = "term") -> str:
-        """Calculate insurance premium"""
-        
-        # Simple premium calculation with static rates
-        if policy_type.lower() == "term":
-            base_rate = 0.6  # $0.60 per $1000
-            age_factor = 1.0 + ((age - 25) * 0.02)  # 2% increase per year after 25
-        else:  # whole life
-            base_rate = 2.5  # $2.50 per $1000
-            age_factor = 1.0 + ((age - 25) * 0.015)  # 1.5% increase per year after 25
-        
-        monthly_premium = (coverage_amount / 1000) * base_rate * age_factor
-        annual_premium = monthly_premium * 12
-        
-        return f"""Premium Estimate:
-• Coverage: ${coverage_amount:,} {policy_type} life insurance
-• Age: {age}
-• Monthly Premium: ${monthly_premium:.2f}
-• Annual Premium: ${annual_premium:.2f}
+    def search_available_policies(self, age: int, category: str = "life") -> str:
+        """Return realistic policy options as JSON"""
+        policy_catalog = {
+            "life": [
+                {
+                    "id": "TL20-2025",
+                    "name": "SecureLife Term 20",
+                    "type": "Term Life (20-year level)",
+                    "min_age": 18,
+                    "max_age": 65,
+                    "min_coverage": 100_000,
+                    "max_coverage": 5_000_000,
+                    "features": ["Level premiums", "Convertible options", "Accelerated benefits rider"],
+                    "best_for": "Young families needing affordable protection",
+                },
+                {
+                    "id": "TL30-2025",
+                    "name": "SecureLife Term 30",
+                    "type": "Term Life (30-year level)",
+                    "min_age": 18,
+                    "max_age": 55,
+                    "min_coverage": 250_000,
+                    "max_coverage": 3_000_000,
+                    "features": ["Level premiums", "Renewable", "Living benefits rider"],
+                    "best_for": "Longer-term obligations like a mortgage",
+                },
+                {
+                    "id": "WL-2025",
+                    "name": "WholeLife Plus",
+                    "type": "Whole Life",
+                    "min_age": 18,
+                    "max_age": 75,
+                    "min_coverage": 50_000,
+                    "max_coverage": 2_000_000,
+                    "features": ["Cash value accumulation", "Dividend eligible"],
+                    "best_for": "Lifetime coverage and savings component",
+                },
+                {
+                    "id": "UL-2025",
+                    "name": "FlexLife Universal",
+                    "type": "Universal Life",
+                    "min_age": 20,
+                    "max_age": 70,
+                    "min_coverage": 100_000,
+                    "max_coverage": 1_500_000,
+                    "features": ["Flexible premiums", "Adjustable death benefit"],
+                    "best_for": "Flexible coverage with potential growth",
+                },
+            ],
+            "auto": [
+                {"id": "AUTO-STD", "name": "SafeDrive Standard", "type": "Full Coverage", "min_age": 18, "max_age": 85},
+                {"id": "AUTO-PRM", "name": "SafeDrive Premium", "type": "Premium Coverage", "min_age": 25, "max_age": 85},
+            ],
+            "home": [
+                {"id": "HOME-HO3", "name": "HomeShield HO-3", "type": "Homeowners", "coverage_types": ["dwelling", "property", "liability"]},
+                {"id": "HOME-PREM", "name": "HomeShield Premium", "type": "Comprehensive", "coverage_types": ["dwelling", "property", "liability", "flood", "quake"]},
+            ],
+        }
 
-*Rates shown are estimates for illustration purposes"""
-    
-    @kernel_function(
-        name="get_coverage_recommendation", 
-        description="Recommend coverage amount based on income and family situation"
-    )
-    def get_coverage_recommendation(self, annual_income: int, has_family: bool = False) -> str:
-        """Recommend appropriate coverage amount"""
-        
-        # Simple rule-based recommendation
-        if has_family:
-            multiplier = 10  # 10x income for families
-            reason = "to replace income and cover family expenses"
-        else:
-            multiplier = 6   # 6x income for singles  
-            reason = "to cover debts and final expenses"
-        
-        recommended_coverage = annual_income * multiplier
-        
-        return f"""Coverage Recommendation:
-• Recommended Amount: ${recommended_coverage:,}
-• Calculation: {multiplier}x your annual income of ${annual_income:,}
-• Reasoning: This amount should be sufficient {reason}
+        data = policy_catalog.get(category.lower(), [])
+        eligible = []
+        for p in data:
+            if category.lower() in ("life", "auto"):
+                if p.get("min_age", 0) <= age <= p.get("max_age", 200):
+                    eligible.append(p)
+            else:
+                eligible.append(p)
 
-This follows standard industry guidelines for life insurance coverage."""
+        result = {
+            "category": category.lower(),
+            "criteria": {"age": age},
+            "found": len(eligible),
+            "policies": eligible,
+        }
+        return json.dumps(result, indent=2)
+
+    @kernel_function(
+        name="calculate_coverage_needs",
+        description="Calculate recommended life insurance coverage using standard methods. Returns structured data."
+    )
+    def calculate_coverage_needs(self, annual_income: int, dependents: int = 0, debts: int = 0, mortgage: int = 0) -> str:
+        """Return coverage analysis as JSON"""
+        years = 10 if dependents > 0 else 5
+        income_replacement = annual_income * years
+
+        education = max(dependents, 0) * 100_000  # $100k per child (est.)
+        dime_total = debts + (annual_income * 5) + mortgage + education
+
+        human_life_value = int(annual_income * 20 * 0.75)
+
+        methods = {
+            "income_replacement": {"years": years, "amount": income_replacement},
+            "dime": {"debts": debts, "income_multiple": annual_income * 5, "mortgage": mortgage, "education": education, "total": dime_total},
+            "human_life_value": {"present_value_proxy": human_life_value},
+        }
+
+        amounts = [income_replacement, dime_total, human_life_value]
+        recommended = round((sum(amounts) / len(amounts)) / 50_000) * 50_000
+
+        result = {
+            "inputs": {
+                "annual_income": annual_income,
+                "dependents": dependents,
+                "debts": debts,
+                "mortgage": mortgage,
+            },
+            "methods": methods,
+            "recommended_coverage": int(recommended),
+            "notes": "Average of standard methods rounded to nearest $50k",
+        }
+        return json.dumps(result, indent=2)
+
+    @kernel_function(
+        name="estimate_premiums",
+        description="Estimate premiums for a given coverage and age using rate tables. Returns structured data."
+    )
+    def estimate_premiums(self, age: int, coverage_amount: int, policy_type: str = "term") -> str:
+        """Return premium estimates as JSON"""
+        rate_tables = {
+            "term": {
+                25: {"preferred": 0.12, "standard": 0.18, "substandard": 0.35},
+                30: {"preferred": 0.15, "standard": 0.22, "substandard": 0.42},
+                35: {"preferred": 0.20, "standard": 0.30, "substandard": 0.58},
+                40: {"preferred": 0.32, "standard": 0.48, "substandard": 0.95},
+                45: {"preferred": 0.52, "standard": 0.78, "substandard": 1.55},
+                50: {"preferred": 0.88, "standard": 1.32, "substandard": 2.65},
+                55: {"preferred": 1.45, "standard": 2.18, "substandard": 4.35},
+                60: {"preferred": 2.35, "standard": 3.53, "substandard": 7.05},
+            },
+            "whole": {
+                25: {"preferred": 2.15, "standard": 2.58, "substandard": 3.87},
+                30: {"preferred": 2.65, "standard": 3.18, "substandard": 4.77},
+                35: {"preferred": 3.35, "standard": 4.02, "substandard": 6.03},
+                40: {"preferred": 4.25, "standard": 5.10, "substandard": 7.65},
+                45: {"preferred": 5.45, "standard": 6.54, "substandard": 9.81},
+                50: {"preferred": 7.15, "standard": 8.58, "substandard": 12.87},
+                55: {"preferred": 9.55, "standard": 11.46, "substandard": 17.19},
+                60: {"preferred": 12.85, "standard": 15.42, "substandard": 23.13},
+            },
+        }
+
+        category_key = "term" if "term" in policy_type.lower() else "whole"
+        brackets = list(rate_tables[category_key].keys())
+        closest_age = min(brackets, key=lambda a: abs(a - age))
+        rates = rate_tables[category_key][closest_age]
+
+        estimates = {}
+        for health_class, per_thousand_rate in rates.items():
+            monthly = (coverage_amount / 1000) * per_thousand_rate
+            estimates[health_class] = {
+                "monthly": round(monthly, 2),
+                "annual": round(monthly * 12, 2),
+            }
+
+        result = {
+            "policy_type": category_key,
+            "age_used_for_rate": closest_age,
+            "coverage_amount": coverage_amount,
+            "estimates_by_health_class": estimates,
+            "notes": "Rates are illustrative estimates and may vary with underwriting.",
+        }
+        return json.dumps(result, indent=2)
 
 # Simple Test to Show Agent in Action
 
@@ -232,22 +336,22 @@ async def demo_simple_agent():
     agent = SimpleInsuranceAgent()
     await agent.initialize()
     
-    print("?? Insurance Agent Demo")
+    print("Insurance Agent Demo")
     print("=" * 50)
     
     # Simulate realistic conversation
     conversation = [
         "Hi, I'm looking for life insurance advice",
-        "I'm 35 years old, married with kids, and make $80,000 per year", 
+        "I'm 35 years old, married with 2 kids, make $80,000 per year, no debts, $300,000 mortgage, goals: income replacement and kids' education",
         "What coverage amount would you recommend?",
-        "Can you show me what policies are available and what they'd cost?",
-        "The 20-year term looks good. What would $800,000 coverage cost me?"
+        "What options would fit me?",
+        "If I go with term, what would $800,000 cost me?"
     ]
     
     for i, message in enumerate(conversation, 1):
-        print(f"\n?? Customer: {message}")
+        print(f"\nCustomer: {message}")
         response = await agent.chat(message)
-        print(f"?? Agent: {response}")
+        print(f"Agent: {response}")
         print("-" * 50)
 
 if __name__ == "__main__":
@@ -273,14 +377,14 @@ instructions = "You prioritize protection. Always recommend comprehensive covera
 ```
 
 ### 2. **Automatic Tool Invocation**
-With `FunctionCallBehavior.EnableFunctions(auto_invoke=True)`, the agent automatically calls functions when needed:
+With `FunctionCallBehavior.EnableFunctions(auto_invoke=True)`, the agent automatically calls appropriate tools when needed:
 
 ```python
 # User says: "I'm 30 and need life insurance"
-# Agent automatically calls find_life_policies(age=30) 
+# Agent automatically uses a policy search tool based on the conversation context
 
 # User says: "What would $500K cost me?"
-# Agent automatically calls calculate_premium(age=30, coverage_amount=500000)
+# Agent automatically uses a premium estimation tool with the right parameters
 ```
 
 ### 3. **Built-in Memory with ChatHistory**

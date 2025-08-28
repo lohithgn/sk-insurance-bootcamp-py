@@ -1,15 +1,15 @@
 # Lab 2: Build a PolicyAdvisorAgent with Semantic Kernel
 
 **Duration**: 45 minutes  
-**Objective**: Build a conversational insurance agent using SK's ChatCompletionAgent framework that can recommend policies using simple plugins.
+**Objective**: Build a conversational insurance agent using SK's ChatCompletionAgent framework that follows a clear 5-step process, uses structured JSON tools, and maintains conversation memory.
 
 ## Learning Outcomes
 By completing this lab, you will be able to:
-- Create a ChatCompletionAgent with personality and tools
-- Build simple plugins for the agent to use automatically  
-- Handle multi-turn conversations with built-in memory
-- Configure agent behavior through system instructions
-- Test agent functionality with realistic scenarios
+- Implement a 5-step, outcome-focused PolicyAdvisorAgent (from Module 3)
+- Integrate a PolicyAdvisorPlugin that returns structured JSON
+- Configure automatic tool invocation with FunctionChoiceBehavior.Auto
+- Maintain multi-turn memory with ChatHistory
+- Test the agent with realistic conversations
 
 ## Prerequisites
 - Completed [Module 3: Single Agent Architecture](../modules/03-single-agent.md)
@@ -21,107 +21,195 @@ By completing this lab, you will be able to:
 ## What We're Building
 
 A conversational insurance agent that:
-- **Remembers** customer information throughout the conversation
-- **Uses tools** to find policies and calculate premiums automatically
-- **Provides recommendations** based on customer needs
-- **Maintains personality** through system instructions
+- Follows a consistent 5-step process with brief step announcements
+- Remembers customer information throughout the conversation
+- Uses tools to search policies, determine coverage, and estimate premiums
+- Provides clear recommendations with minimal questions and sensible defaults
 
 ---
 
-## Step 1: Create the Simple Policy Plugin
+## Step 1: Create the PolicyAdvisorPlugin (structured JSON)
 
 ```python
-# File: policy_data_plugin.py
+# File: policy_advisor_plugin.py
 
+import json
 from semantic_kernel.functions import kernel_function
 
-class PolicyDataPlugin:
-    """Simple insurance policy plugin with static data for agent to use"""
-    
-    @kernel_function(
-        name="find_life_policies",
-        description="Find life insurance policies suitable for customer's age"
-    )
-    def find_life_policies(self, age: int) -> str:
-        """Find life insurance policies based on age"""
-        
-        # Simple static policy data
-        policies = [
-            {"name": "TermLife20", "type": "20-Year Term", "max_age": 65, "rate": "$0.60 per $1K"},
-            {"name": "WholeCare", "type": "Whole Life", "max_age": 75, "rate": "$2.50 per $1K"},
-            {"name": "SimpleTerm", "type": "10-Year Term", "max_age": 60, "rate": "$0.45 per $1K"}
-        ]
-        
-        # Filter policies by age eligibility
-        suitable_policies = [p for p in policies if age <= p["max_age"]]
-        
-        if not suitable_policies:
-            return f"No policies available for age {age}"
-        
-        # Format response
-        result = f"Found {len(suitable_policies)} life insurance options for age {age}:\n\n"
-        for i, policy in enumerate(suitable_policies, 1):
-            result += f"{i}. {policy['name']} ({policy['type']})\n"
-            result += f"   Rate: {policy['rate']} of coverage\n"
-            result += f"   Available up to age {policy['max_age']}\n\n"
-        
-        return result
-    
-    @kernel_function(
-        name="calculate_premium", 
-        description="Calculate monthly premium for life insurance based on age and coverage amount"
-    )
-    def calculate_premium(self, age: int, coverage_amount: int, policy_type: str = "term") -> str:
-        """Calculate insurance premium estimate"""
-        
-        # Simple premium calculation with static rates
-        if policy_type.lower() == "term":
-            base_rate = 0.6  # $0.60 per $1000 coverage
-            age_factor = 1.0 + ((age - 25) * 0.02)  # 2% increase per year after 25
-        else:  # whole life
-            base_rate = 2.5  # $2.50 per $1000 coverage
-            age_factor = 1.0 + ((age - 25) * 0.015)  # 1.5% increase per year after 25
-        
-        # Calculate premiums
-        monthly_premium = (coverage_amount / 1000) * base_rate * age_factor
-        annual_premium = monthly_premium * 12
-        
-        return f"""Premium Calculation:
-• Coverage: ${coverage_amount:,} {policy_type} life insurance
-• Age: {age}
-• Monthly Premium: ${monthly_premium:.2f}
-• Annual Premium: ${annual_premium:.2f}
+class PolicyAdvisorPlugin:
+    """Plugin with realistic insurance data and calculations to support the 5-step process."""
 
-*Estimates for illustration purposes only"""
-    
     @kernel_function(
-        name="recommend_coverage",
-        description="Recommend appropriate coverage amount based on income and family situation"
+        name="search_available_policies",
+        description="Search policies available for a customer's age and category (life, auto, home). Returns structured data."
     )
-    def recommend_coverage(self, annual_income: int, has_family: bool = False) -> str:
-        """Recommend coverage amount using industry guidelines"""
-        
-        # Standard industry recommendation rules
-        if has_family:
-            multiplier = 10  # 10x income for families with dependents
-            reason = "to replace income and support family expenses"
-        else:
-            multiplier = 6   # 6x income for single individuals
-            reason = "to cover debts and final expenses"
-        
-        recommended_amount = annual_income * multiplier
-        
-        return f"""Coverage Recommendation:
-• Recommended Amount: ${recommended_amount:,}
-• Calculation: {multiplier}x your ${annual_income:,} annual income
-• Reasoning: This should be sufficient {reason}
+    def search_available_policies(self, age: int, category: str = "life") -> str:
+        """Return realistic policy options as JSON"""
+        policy_catalog = {
+            "life": [
+                {
+                    "id": "TL20-2025",
+                    "name": "SecureLife Term 20",
+                    "type": "Term Life (20-year level)",
+                    "min_age": 18,
+                    "max_age": 65,
+                    "min_coverage": 100_000,
+                    "max_coverage": 5_000_000,
+                    "features": ["Level premiums", "Convertible options", "Accelerated benefits rider"],
+                    "best_for": "Young families needing affordable protection",
+                },
+                {
+                    "id": "TL30-2025",
+                    "name": "SecureLife Term 30",
+                    "type": "Term Life (30-year level)",
+                    "min_age": 18,
+                    "max_age": 55,
+                    "min_coverage": 250_000,
+                    "max_coverage": 3_000_000,
+                    "features": ["Level premiums", "Renewable", "Living benefits rider"],
+                    "best_for": "Longer-term obligations like a mortgage",
+                },
+                {
+                    "id": "WL-2025",
+                    "name": "WholeLife Plus",
+                    "type": "Whole Life",
+                    "min_age": 18,
+                    "max_age": 75,
+                    "min_coverage": 50_000,
+                    "max_coverage": 2_000_000,
+                    "features": ["Cash value accumulation", "Dividend eligible"],
+                    "best_for": "Lifetime coverage and savings component",
+                },
+                {
+                    "id": "UL-2025",
+                    "name": "FlexLife Universal",
+                    "type": "Universal Life",
+                    "min_age": 20,
+                    "max_age": 70,
+                    "min_coverage": 100_000,
+                    "max_coverage": 1_500_000,
+                    "features": ["Flexible premiums", "Adjustable death benefit"],
+                    "best_for": "Flexible coverage with potential growth",
+                },
+            ],
+            "auto": [
+                {"id": "AUTO-STD", "name": "SafeDrive Standard", "type": "Full Coverage", "min_age": 18, "max_age": 85},
+                {"id": "AUTO-PRM", "name": "SafeDrive Premium", "type": "Premium Coverage", "min_age": 25, "max_age": 85},
+            ],
+            "home": [
+                {"id": "HOME-HO3", "name": "HomeShield HO-3", "type": "Homeowners", "coverage_types": ["dwelling", "property", "liability"]},
+                {"id": "HOME-PREM", "name": "HomeShield Premium", "type": "Comprehensive", "coverage_types": ["dwelling", "property", "liability", "flood", "quake"]},
+            ],
+        }
 
-This follows standard insurance industry guidelines."""
+        data = policy_catalog.get(category.lower(), [])
+        eligible = []
+        for p in data:
+            if category.lower() in ("life", "auto"):
+                if p.get("min_age", 0) <= age <= p.get("max_age", 200):
+                    eligible.append(p)
+            else:
+                eligible.append(p)
+
+        result = {
+            "category": category.lower(),
+            "criteria": {"age": age},
+            "found": len(eligible),
+            "policies": eligible,
+        }
+        return json.dumps(result, indent=2)
+
+    @kernel_function(
+        name="calculate_coverage_needs",
+        description="Calculate recommended life insurance coverage using standard methods. Returns structured data."
+    )
+    def calculate_coverage_needs(self, annual_income: int, dependents: int = 0, debts: int = 0, mortgage: int = 0) -> str:
+        """Return coverage analysis as JSON"""
+        years = 10 if dependents > 0 else 5
+        income_replacement = annual_income * years
+
+        education = max(dependents, 0) * 100_000  # $100k per child (est.)
+        dime_total = debts + (annual_income * 5) + mortgage + education
+
+        human_life_value = int(annual_income * 20 * 0.75)
+
+        methods = {
+            "income_replacement": {"years": years, "amount": income_replacement},
+            "dime": {"debts": debts, "income_multiple": annual_income * 5, "mortgage": mortgage, "education": education, "total": dime_total},
+            "human_life_value": {"present_value_proxy": human_life_value},
+        }
+
+        amounts = [income_replacement, dime_total, human_life_value]
+        recommended = round((sum(amounts) / len(amounts)) / 50_000) * 50_000
+
+        result = {
+            "inputs": {
+                "annual_income": annual_income,
+                "dependents": dependents,
+                "debts": debts,
+                "mortgage": mortgage,
+            },
+            "methods": methods,
+            "recommended_coverage": int(recommended),
+            "notes": "Average of standard methods rounded to nearest $50k",
+        }
+        return json.dumps(result, indent=2)
+
+    @kernel_function(
+        name="estimate_premiums",
+        description="Estimate premiums for a given coverage and age using rate tables. Returns structured data."
+    )
+    def estimate_premiums(self, age: int, coverage_amount: int, policy_type: str = "term") -> str:
+        """Return premium estimates as JSON"""
+        rate_tables = {
+            "term": {
+                25: {"preferred": 0.12, "standard": 0.18, "substandard": 0.35},
+                30: {"preferred": 0.15, "standard": 0.22, "substandard": 0.42},
+                35: {"preferred": 0.20, "standard": 0.30, "substandard": 0.58},
+                40: {"preferred": 0.32, "standard": 0.48, "substandard": 0.95},
+                45: {"preferred": 0.52, "standard": 0.78, "substandard": 1.55},
+                50: {"preferred": 0.88, "standard": 1.32, "substandard": 2.65},
+                55: {"preferred": 1.45, "standard": 2.18, "substandard": 4.35},
+                60: {"preferred": 2.35, "standard": 3.53, "substandard": 7.05},
+            },
+            "whole": {
+                25: {"preferred": 2.15, "standard": 2.58, "substandard": 3.87},
+                30: {"preferred": 2.65, "standard": 3.18, "substandard": 4.77},
+                35: {"preferred": 3.35, "standard": 4.02, "substandard": 6.03},
+                40: {"preferred": 4.25, "standard": 5.10, "substandard": 7.65},
+                45: {"preferred": 5.45, "standard": 6.54, "substandard": 9.81},
+                50: {"preferred": 7.15, "standard": 8.58, "substandard": 12.87},
+                55: {"preferred": 9.55, "standard": 11.46, "substandard": 17.19},
+                60: {"preferred": 12.85, "standard": 15.42, "substandard": 23.13},
+            },
+        }
+
+        category_key = "term" if "term" in policy_type.lower() else "whole"
+        brackets = list(rate_tables[category_key].keys())
+        closest_age = min(brackets, key=lambda a: abs(a - age))
+        rates = rate_tables[category_key][closest_age]
+
+        estimates = {}
+        for health_class, per_thousand_rate in rates.items():
+            monthly = (coverage_amount / 1000) * per_thousand_rate
+            estimates[health_class] = {
+                "monthly": round(monthly, 2),
+                "annual": round(monthly * 12, 2),
+            }
+
+        result = {
+            "policy_type": category_key,
+            "age_used_for_rate": closest_age,
+            "coverage_amount": coverage_amount,
+            "estimates_by_health_class": estimates,
+            "notes": "Rates are illustrative estimates and may vary with underwriting.",
+        }
+        return json.dumps(result, indent=2)
 ```
 
 ---
 
-## Step 2: Build the PolicyAdvisorAgent
+## Step 2: Build the PolicyAdvisorAgent (5-step process)
 
 ```python
 # File: policy_advisor_agent.py
@@ -134,27 +222,27 @@ from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents.chat_history import ChatHistory
-from semantic_kernel.connectors.ai.function_call_behavior import FunctionCallBehavior
+from semantic_kernel.functions import KernelArguments
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 
-from policy_data_plugin import PolicyDataPlugin
+from policy_advisor_plugin import PolicyAdvisorPlugin
 
 # Load environment variables
 load_dotenv()
 
 class PolicyAdvisorAgent:
-    """Insurance advisor agent built with SK ChatCompletionAgent framework"""
-    
+    """Insurance advisor agent built with SK ChatCompletionAgent framework."""
+
     def __init__(self):
         self.kernel = None
         self.agent = None
         self.chat_history = ChatHistory()
-    
+
     async def initialize(self):
-        """Initialize the agent with kernel, plugins, and personality"""
-        
-        print("?? Initializing PolicyAdvisorAgent...")
-        
+        """Initialize the agent with kernel, plugins, and personality."""
+        print("Initializing PolicyAdvisorAgent...")
+
         # 1. Create kernel and add AI service
         self.kernel = Kernel()
         service = AzureChatCompletion(
@@ -165,96 +253,70 @@ class PolicyAdvisorAgent:
             api_version=os.getenv("AZURE_OPENAI_API_VERSION")
         )
         self.kernel.add_service(service)
-        
+
         # 2. Add policy plugin (tools for the agent)
-        policy_plugin = PolicyDataPlugin()
+        policy_plugin = PolicyAdvisorPlugin()
         self.kernel.add_plugin(policy_plugin, plugin_name="PolicyTools")
-        
-        # 3. Create ChatCompletionAgent with personality
-        execution_settings = OpenAIChatPromptExecutionSettings(
-            service_id="azure_openai",
-            max_tokens=800,
-            temperature=0.7,
-            function_call_behavior=FunctionCallBehavior.EnableFunctions(auto_invoke=True)
-        )
-        
+
+        # 3. Create ChatCompletionAgent with a clear, outcome-focused 5-step process
         self.agent = ChatCompletionAgent(
-            service_id="azure_openai",
             kernel=self.kernel,
             name="PolicyAdvisorAgent",
             instructions=self._get_agent_instructions(),
-            execution_settings=execution_settings
+            arguments=KernelArguments(settings=OpenAIChatPromptExecutionSettings(
+                max_tokens=1000,
+                temperature=0.7,
+                function_choice_behavior=FunctionChoiceBehavior.Auto()
+            ))
         )
-        
-        print("? PolicyAdvisorAgent ready!")
-    
+
+        print("PolicyAdvisorAgent ready with 5-step process!")
+
     def _get_agent_instructions(self) -> str:
-        """Define the agent's personality and behavior"""
-        return """You are PolicyAdvisorAgent, a friendly and knowledgeable insurance advisor helping customers find the right life insurance coverage.
+        """Define the agent's personality and behavior (5-step process)."""
+        return """You are a professional insurance advisor. For every policy recommendation, follow this systematic process:
 
-PERSONALITY:
-- Warm, professional, and patient
-- Ask thoughtful questions to understand needs
-- Explain recommendations clearly without jargon
-- Show genuine care for customer's financial protection
+STEP 1 ? UNDERSTAND THE CUSTOMER
+Announce: "Step 1: Understanding your situation..."
+Goal: Gather a complete picture of their profile and needs (age, income, family, goals)
 
-YOUR PROCESS:
-1. DISCOVER: Learn about the customer
-   - Age, income, family situation, current coverage, goals
-   
-2. ANALYZE: Use your PolicyTools to find options
-   - Search for suitable policies based on their profile
-   - Calculate premiums for different scenarios
-   - Recommend appropriate coverage amounts
+STEP 2 ? IDENTIFY OPTIONS
+Announce: "Step 2: Identifying suitable options..."
+Goal: Find policies that match their profile and constraints
 
-3. ADVISE: Provide personalized recommendations
-   - Explain why specific policies fit their needs
-   - Show premium calculations
-   - Give clear next steps
+STEP 3 ? DETERMINE COVERAGE
+Announce: "Step 3: Calculating appropriate coverage..."
+Goal: Determine how much insurance they need based on standard methods
 
-IMPORTANT GUIDELINES:
-- Always gather key information (age, income, family) before recommendations
-- Use your tools to provide accurate, data-driven advice
-- Explain your reasoning clearly
-- Reference previous conversation points naturally
-- If you need more information, ask specific questions
+STEP 4 ? ESTIMATE INVESTMENT
+Announce: "Step 4: Estimating your investment..."
+Goal: Estimate premiums for the recommended coverage
 
-Remember: You're helping them make important financial decisions for their family's security."""
-    
+STEP 5 ? RECOMMEND SOLUTION
+Announce: "Step 5: My recommendation..."
+Goal: Provide clear advice with concise reasoning
+
+Use the appropriate tools at your disposal to complete each step thoroughly. Keep responses concise and user-friendly.
+
+Policies and defaults:
+- Do Step 1 once per conversation. Build an internal CustomerProfile {age, income, dependents, debts, mortgage, goals, health_class, preferred_term} from chat history; keep it updated silently.
+- Ask at most one non-redundant question per turn, only if it materially changes the outcome. Never ask for details already provided.
+- If required information is missing, proceed with best-effort defaults and disclose under "Assumptions":
+  - debts: 0; mortgage: 0; goals: income replacement (+ children's education if dependents > 0); health_class: Standard; preferred_term: 20 years if age < 40, otherwise 20–30 years.
+- If the user requests a later step (e.g., premiums), answer that step immediately using the current profile + assumptions; do not return to Step 1.
+- Start with the requested answer, then add brief context. Label any optional clarification "Optional".
+- Keep steps concise and do not re-announce Step 1 after it has been completed."""
+
     async def chat(self, user_message: str) -> str:
-        """Have a conversation turn with the user"""
-        
-        try:
-            # Add user message to conversation
-            self.chat_history.add_user_message(user_message)
-            
-            # Get agent response (automatically uses tools when needed)
-            response = await self.agent.invoke(self.chat_history)
-            
-            # Return agent's response
-            if response and len(response) > 0:
-                return response[-1].content
-            else:
-                return "I apologize, I had trouble generating a response. Could you please try again?"
-                
-        except Exception as e:
-            error_msg = f"I encountered an issue: {str(e)[:100]}... Let me try to help you anyway. What specific insurance questions do you have?"
-            self.chat_history.add_assistant_message(error_msg)
-            return error_msg
-    
-    def get_conversation_summary(self) -> dict:
-        """Get conversation statistics"""
-        user_messages = [msg for msg in self.chat_history.messages if msg.role.value == "user"]
-        return {
-            "total_messages": len(self.chat_history.messages),
-            "user_turns": len(user_messages),
-            "conversation_active": len(self.chat_history.messages) > 0
-        }
-    
-    def reset_conversation(self):
-        """Start a new conversation"""
-        self.chat_history = ChatHistory()
-        print("?? Conversation reset")
+        """Have a conversation turn with the user."""
+        # Add user message to conversation
+        self.chat_history.add_user_message(user_message)
+
+        # Get agent response (automatically uses tools when needed)
+        response = await self.agent.get_response(self.chat_history)
+
+        # Return the agent's response
+        return response.content if response else "I didn't understand that. Could you try again?"
 ```
 
 ---
@@ -268,175 +330,94 @@ import asyncio
 from policy_advisor_agent import PolicyAdvisorAgent
 
 async def test_basic_conversation():
-    """Test basic agent conversation flow"""
-    
-    print("?? Test 1: Basic Conversation Flow")
+    """Test basic agent conversation flow aligned with the 5-step process."""
+
+    print("Test 1: Basic Conversation Flow")
     print("=" * 50)
-    
+
     # Initialize agent
     agent = PolicyAdvisorAgent()
     await agent.initialize()
-    
+
     # Test conversation flow
     test_conversation = [
         "Hi, I'm looking for life insurance advice",
-        "I'm 35 years old and married with 2 children",  
-        "My annual income is about $75,000",
-        "What coverage amount would you recommend for someone in my situation?",
-        "Can you show me what policies are available for my age?",
-        "What would $750,000 in term coverage cost me monthly?"
+        "I'm 35 years old, married with 2 kids, income is $80,000, mortgage $300,000",
+        "What coverage amount would you recommend?",
+        "What options would fit me?",
+        "If I go with term, what would $800,000 cost me?"
     ]
-    
+
     for i, message in enumerate(test_conversation, 1):
-        print(f"\n??? Customer (Turn {i}): {message}")
+        print(f"\nCustomer (Turn {i}): {message}")
         response = await agent.chat(message)
-        print(f"?? Agent: {response[:200]}...")
-        
-        # Show conversation stats
-        stats = agent.get_conversation_summary()
-        print(f"?? Stats: {stats['user_turns']} turns, {stats['total_messages']} total messages")
+        print(f"Agent: {response[:400]}...")
         print("-" * 60)
 
 async def test_agent_memory():
-    """Test that agent remembers context across conversation"""
-    
-    print("\n?? Test 2: Agent Memory & Context")
+    """Test that agent remembers context across conversation and honors step shortcuts."""
+
+    print("\nTest 2: Agent Memory & Context")
     print("=" * 50)
-    
+
     agent = PolicyAdvisorAgent()
     await agent.initialize()
-    
+
     # Build up context over multiple turns
     memory_test = [
         "Hi, I need insurance help",
-        "I'm 28 years old",  # Agent should remember age
-        "I make $60,000 per year",  # Agent should remember income
-        "I'm single with no kids",  # Agent should remember family status
-        "Now what do you recommend?"  # Agent should use all previous context
+        "I'm 28 years old",                      # Agent should remember age
+        "I make $60,000 per year",               # Agent should remember income
+        "I'm single with no kids",               # Agent should remember family status
+        "What would $500,000 term cost monthly?" # Should jump to Step 4 without redoing Step 1
     ]
-    
+
     for i, message in enumerate(memory_test, 1):
-        print(f"\n?? Turn {i}: {message}")
+        print(f"\nTurn {i}: {message}")
         response = await agent.chat(message)
-        
-        # Check if agent references previous information
-        if i == 5:  # Final turn
-            context_words = ["28", "60,000", "60000", "single", "no kids", "remember", "mentioned"]
-            context_found = any(word in response.lower() for word in context_words)
-            if context_found:
-                print("? Agent remembered previous context!")
-            else:
-                print("? Agent may not be using previous context")
-        
-        print(f"?? Agent: {response[:150]}...")
+        print(f"Agent: {response[:300]}...")
         print("-" * 40)
 
-async def run_comprehensive_test():
-    """Run all tests for the PolicyAdvisorAgent"""
-    
-    print("?? Starting Comprehensive PolicyAdvisorAgent Testing")
-    print("=" * 60)
-    
-    try:
-        # Run test suites
-        await test_basic_conversation()
-        await test_agent_memory()
-        
-        print("\n?? All tests completed!")
-        print("? PolicyAdvisorAgent is working correctly!")
-        
-    except Exception as e:
-        print(f"? Test suite failed: {str(e)}")
+async def run_all():
+    await test_basic_conversation()
+    await test_agent_memory()
 
-# Interactive testing function
-async def interactive_test():
-    """Interactive test mode for manual testing"""
-    
-    print("?? Interactive Test Mode")
-    print("=" * 30)
-    print("Type 'exit' to quit, 'reset' to start new conversation")
-    
-    agent = PolicyAdvisorAgent()
-    await agent.initialize()
-    
-    while True:
-        try:
-            user_input = input("\n??? You: ")
-            
-            if user_input.lower() in ['exit', 'quit', 'bye']:
-                print("?? Goodbye!")
-                break
-            elif user_input.lower() == 'reset':
-                agent.reset_conversation()
-                continue
-            elif user_input.strip() == '':
-                print("Please enter a message or 'exit' to quit.")
-                continue
-            
-            response = await agent.chat(user_input)
-            print(f"?? Agent: {response}")
-            
-            # Show conversation stats
-            stats = agent.get_conversation_summary()
-            print(f"?? [{stats['user_turns']} turns]")
-            
-        except KeyboardInterrupt:
-            print("\n?? Goodbye!")
-            break
-        except Exception as e:
-            print(f"? Error: {str(e)}")
-
-# Main execution
 if __name__ == "__main__":
-    print("PolicyAdvisorAgent Lab 2 Testing")
-    print("Choose test mode:")
-    print("1. Comprehensive automated tests")
-    print("2. Interactive manual testing")
-    
-    choice = input("\nEnter choice (1 or 2): ").strip()
-    
-    if choice == "1":
-        asyncio.run(run_comprehensive_test())
-    elif choice == "2":
-        asyncio.run(interactive_test())
-    else:
-        print("Invalid choice. Running comprehensive tests by default.")
-        asyncio.run(run_comprehensive_test())
+    asyncio.run(run_all())
 ```
 
 ---
 
 ## Success Criteria & Validation
 
-### ? Your Agent Should:
-
-1. **Create Successfully**: Initialize without errors
-2. **Remember Context**: Reference information from previous messages  
-3. **Use Tools Automatically**: Call plugin functions when relevant
-4. **Maintain Personality**: Respond as a professional insurance advisor
-5. **Handle Edge Cases**: Gracefully manage invalid or unclear inputs
-
-### ?? Validation Tests:
-
-Run the test and verify:
-- Agent remembers customer is 35, married, with children, income $75K
-- Agent automatically searches policies when discussing options  
-- Agent calculates premiums when asked about costs
-- Agent provides coverage recommendations based on family situation
+Your agent should:
+- Initialize without errors
+- Announce steps concisely and follow the 5-step process (Step 1 only once)
+- Use tools automatically (responses reference structured JSON outputs)
+- Remember prior context across turns
+- Ask at most one targeted, non-redundant question when needed
+- Proceed with documented assumptions when information is missing
+- Provide clear, concise recommendations with brief reasoning and an Optional section when needed
 
 ---
 
-## ?? Congratulations!
+## Run Instructions
 
-You've successfully built a PolicyAdvisorAgent using the SK Agent Framework! 
+- Ensure your .env contains Azure OpenAI settings:
+  - AZURE_OPENAI_ENDPOINT
+  - AZURE_OPENAI_API_KEY
+  - AZURE_OPENAI_DEPLOYMENT_NAME
+  - AZURE_OPENAI_API_VERSION
+- Create two files beside the lab:
+  - policy_advisor_plugin.py
+  - policy_advisor_agent.py
+- Run the tests:
+  - python test_agent.py
 
-**What you've accomplished:**
-- ? Created a conversational AI agent with personality
-- ? Integrated simple plugins that the agent uses automatically
-- ? Implemented conversation memory with ChatHistory  
-- ? Configured agent behavior through system instructions
-- ? Built a production-ready insurance advisory system
+If you prefer, adapt the example prompts from Module 3’s demo for additional testing.
 
-**Next Steps:**
-- **[Lab 3: Multi-Agent System](lab3-multi-agent.md)** - Build multiple agents working together
-- **[Module 4: Multi-Agent Architecture](../modules/04-multi-agent.md)** - Learn orchestration patterns
+---
+
+## Congratulations!
+
+You built a PolicyAdvisorAgent using the SK Agent framework with a robust 5-step process, structured tools, and conversation memory. Next, try customizing the agent personality (budget-friendly, conservative, technical) by swapping instructions, or extend the plugin with additional product categories.
