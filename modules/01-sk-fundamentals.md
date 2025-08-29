@@ -88,7 +88,7 @@ async def test_ai_connection(kernel):
     history.add_user_message("Hello! Can you help me with insurance?")
     
     # Get the AI service
-    ai_service = kernel.get_service("azure_open_ai")
+    ai_service = kernel.get_service("azure_openai")
     
     # Get response
     response = await ai_service.get_chat_message_contents(
